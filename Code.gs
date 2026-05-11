@@ -57,6 +57,7 @@ function getSettings() {
     if (typeof k === 'string' && k.startsWith('---')) {
       if (k.includes('Budget')) section = 'budget';
       else if (k.includes('FX')) section = 'fx';
+      else if (k.includes('Telegram')) section = 'telegram';
       continue;
     }
     if (!k || v === '' || v === null) continue;
@@ -65,6 +66,10 @@ function getSettings() {
       if (k === 'Lookback Days') s.lookback = +v;
     } else if (section === 'budget') s.budgets[k] = +v;
     else if (section === 'fx') s.fx[k] = +v;
+    else if (section === 'telegram') {
+      if (k === 'Telegram Bot Token') s.telegramToken = String(v);
+      else if (k === 'Telegram Chat ID') s.telegramChatId = String(v);
+    }
   }
   return s;
 }
@@ -85,6 +90,9 @@ function initSettings() {
   rows.push(['CNY', '=IFERROR(GOOGLEFINANCE("CURRENCY:CNYSGD"),0.19)', 'Auto']);
   rows.push(['USD', '=IFERROR(GOOGLEFINANCE("CURRENCY:USDSGD"),1.35)', 'Auto']);
   rows.push(['SGD', 1.0, 'Always 1']);
+  rows.push(['--- Telegram Bot ---', '', 'See "Configure Telegram Bot" menu']);
+  rows.push(['Telegram Bot Token', '', 'From @BotFather in Telegram']);
+  rows.push(['Telegram Chat ID', '', 'Send /chatid to your bot to get this']);
   sheet.getRange(1, 1, rows.length, 3).setValues(rows);
   sheet.getRange('A1:C1').setFontWeight('bold').setBackground('#4285f4').setFontColor('#fff');
   sheet.setColumnWidth(1, 200); sheet.setColumnWidth(2, 140); sheet.setColumnWidth(3, 280);
@@ -109,6 +117,9 @@ function onOpen() {
     .addSeparator()
     .addItem('🔄 Re-categorize All', 'recategorizeAll')
     .addItem('🔃 Setup / Migrate', 'setup')
+    .addSeparator()
+    .addItem('🤖 Configure Telegram Bot', 'configureTelegramBot')
+    .addItem('🔗 Set Telegram Webhook', 'setTelegramWebhook')
     .addToUi();
 }
 function backfill30() { backfill(30); buildDashboard(); }
