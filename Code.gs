@@ -236,26 +236,26 @@ function parseDBS(msg) {
   const subject = msg.getSubject();
   if (/eDocument|Limit|received a transfer|OTP|protect|scam/i.test(subject)) return null;
 
-  const amtMatch = body.match(/Amount:\s*SGD\s*([\d.]+)/i);
+  const amtMatch = body.match(/Amount:\s*(?:SGD|S\$)\s*([\d,]+\.?\d{0,2})/i);
   if (!amtMatch) {
     if (/transaction|paynow|nets|fast|alert/i.test(subject)) {
       return { _failed: true, reason: 'DBS: amount field not found' };
     }
     return null;
   }
-  const amount = parseFloat(amtMatch[1]);
+  const amount = parseFloat(amtMatch[1].replace(/,/g, ''));
 
   if (subject.includes('NETS')) {
-    const merch = body.match(/(?:Merchant|To|Payee|At):\s*([A-Z0-9][^\n<]{2,80}?)(?:\s+Date|\s+Reference|\s+Transaction|\s{3,})/i);
+    const merch = body.match(/(?:Merchant|To|Payee|At):\s*([A-Z0-9][^\n<]{2,80}?)(?:\s+If\s|\s+Thank|\s+Yours|\s+Date|\s+Reference|\s+Transaction|\s{3,})/i);
     if (!merch) logParseFailure(msg, 'DBS NETS: merchant not extracted (recorded as Unknown)');
     return { bank:'DBS', type:'NETS', currency:'SGD', amount, merchant: merch ? merch[1].trim() : 'NETS (Unknown Merchant)', status:'success' };
   }
   if (/PAYNOW/i.test(body)) {
-    const toMatch = body.match(/To:\s*([A-Z0-9][^\n<]{2,80}?)(?:\s+Date|\s+Reference|\s+Transaction|\s{3,})/i);
+    const toMatch = body.match(/To:\s*([A-Z0-9][^\n<]{2,80}?)(?:\s+If\s|\s+Thank|\s+Yours|\s+Date|\s+Reference|\s+Transaction|\s{3,})/i);
     return { bank:'DBS', type:'PayNow', currency:'SGD', amount, merchant: toMatch ? toMatch[1].trim() : 'PayNow (recipient unknown)', status:'success' };
   }
   if (/FAST/i.test(body)) {
-    const toMatch = body.match(/To:\s*([A-Z0-9][^\n<]{2,80}?)(?:\s+Date|\s+Reference|\s{3,})/i);
+    const toMatch = body.match(/To:\s*([A-Z0-9][^\n<]{2,80}?)(?:\s+If\s|\s+Thank|\s+Yours|\s+Date|\s+Reference|\s{3,})/i);
     return { bank:'DBS', type:'FAST', currency:'SGD', amount, merchant: toMatch ? toMatch[1].trim() : 'FAST Transfer', status:'success' };
   }
   if (subject.includes('Card Transaction')) {
