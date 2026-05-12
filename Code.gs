@@ -76,27 +76,39 @@ function getSettings() {
 
 function initSettings() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  if (ss.getSheetByName('Settings')) return;
-  const sheet = ss.insertSheet('Settings');
-  const rows = [
-    ['Setting', 'Value', 'Notes'],
-    ['Daily Target', DEFAULT_DAILY_TARGET, 'Max SGD per day target'],
-    ['Lookback Days', DEFAULT_LOOKBACK, 'Days the dashboard shows'],
-    ['--- Weekly Budgets ---', '', 'Edit values to change limits'],
-  ];
-  Object.entries(DEFAULT_BUDGETS).forEach(([k,v]) => rows.push([k, v, '']));
-  rows.push(['--- FX Rates ---', '', 'Live rates from Google Finance']);
-  rows.push(['MYR', '=IFERROR(GOOGLEFINANCE("CURRENCY:MYRSGD"),0.31)', 'Auto']);
-  rows.push(['CNY', '=IFERROR(GOOGLEFINANCE("CURRENCY:CNYSGD"),0.19)', 'Auto']);
-  rows.push(['USD', '=IFERROR(GOOGLEFINANCE("CURRENCY:USDSGD"),1.35)', 'Auto']);
-  rows.push(['SGD', 1.0, 'Always 1']);
-  rows.push(['--- Telegram Bot ---', '', 'See "Configure Telegram Bot" menu']);
-  rows.push(['Telegram Bot Token', '', 'From @BotFather in Telegram']);
-  rows.push(['Telegram Chat ID', '', 'Send /chatid to your bot to get this']);
-  sheet.getRange(1, 1, rows.length, 3).setValues(rows);
-  sheet.getRange('A1:C1').setFontWeight('bold').setBackground('#4285f4').setFontColor('#fff');
-  sheet.setColumnWidth(1, 200); sheet.setColumnWidth(2, 140); sheet.setColumnWidth(3, 280);
-  sheet.setFrozenRows(1);
+  let sheet = ss.getSheetByName('Settings');
+  if (!sheet) {
+    sheet = ss.insertSheet('Settings');
+    const rows = [
+      ['Setting', 'Value', 'Notes'],
+      ['Daily Target', DEFAULT_DAILY_TARGET, 'Max SGD per day target'],
+      ['Lookback Days', DEFAULT_LOOKBACK, 'Days the dashboard shows'],
+      ['--- Weekly Budgets ---', '', 'Edit values to change limits'],
+    ];
+    Object.entries(DEFAULT_BUDGETS).forEach(([k,v]) => rows.push([k, v, '']));
+    rows.push(['--- FX Rates ---', '', 'Live rates from Google Finance']);
+    rows.push(['MYR', '=IFERROR(GOOGLEFINANCE("CURRENCY:MYRSGD"),0.31)', 'Auto']);
+    rows.push(['CNY', '=IFERROR(GOOGLEFINANCE("CURRENCY:CNYSGD"),0.19)', 'Auto']);
+    rows.push(['USD', '=IFERROR(GOOGLEFINANCE("CURRENCY:USDSGD"),1.35)', 'Auto']);
+    rows.push(['SGD', 1.0, 'Always 1']);
+    rows.push(['--- Telegram Bot ---', '', 'See "Configure Telegram Bot" menu']);
+    rows.push(['Telegram Bot Token', '', 'From @BotFather in Telegram']);
+    rows.push(['Telegram Chat ID', '', 'Send /chatid to your bot to get this']);
+    sheet.getRange(1, 1, rows.length, 3).setValues(rows);
+    sheet.getRange('A1:C1').setFontWeight('bold').setBackground('#4285f4').setFontColor('#fff');
+    sheet.setColumnWidth(1, 200); sheet.setColumnWidth(2, 140); sheet.setColumnWidth(3, 280);
+    sheet.setFrozenRows(1);
+    return;
+  }
+  // Migrate: append any missing rows so older installs pick up new settings.
+  const existing = new Set(sheet.getRange(1, 1, sheet.getLastRow(), 1).getValues().map(r => r[0]));
+  const additions = [];
+  if (!existing.has('--- Telegram Bot ---')) additions.push(['--- Telegram Bot ---', '', 'See "Configure Telegram Bot" menu']);
+  if (!existing.has('Telegram Bot Token')) additions.push(['Telegram Bot Token', '', 'From @BotFather in Telegram']);
+  if (!existing.has('Telegram Chat ID')) additions.push(['Telegram Chat ID', '', 'Send /chatid to your bot to get this']);
+  if (additions.length) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, additions.length, 3).setValues(additions);
+  }
 }
 
 // ===== MENU =====
