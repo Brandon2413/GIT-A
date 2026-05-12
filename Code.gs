@@ -513,14 +513,14 @@ function buildDashboard() {
     dash.getRange(row+2, 4, catRows.length, 4).setValues(catRows);
   }
 
-  dash.getRange(row, 9).setValue(`🏪 Top 15 Merchants`).setFontWeight('bold').setFontSize(13);
+  dash.getRange(row, 9).setValue(`🏪 Merchants (all)`).setFontWeight('bold').setFontSize(13);
   dash.getRange(row+1, 9, 1, 2).setValues([['Merchant', 'SGD']]).setFontWeight('bold').setBackground('#e8f0fe');
-  const topMerch = Object.entries(merchants).sort((a,b) => b[1]-a[1]).slice(0, 15);
+  const topMerch = Object.entries(merchants).sort((a,b) => b[1]-a[1]);
   if (topMerch.length) dash.getRange(row+2, 9, topMerch.length, 2).setValues(topMerch.map(([m,v]) => [m, v.toFixed(2)]));
 
-  dash.getRange(row, 12).setValue(`💸 Top 10 Single Purchases`).setFontWeight('bold').setFontSize(13);
+  dash.getRange(row, 12).setValue(`💸 All Purchases (by size)`).setFontWeight('bold').setFontSize(13);
   dash.getRange(row+1, 12, 1, 3).setValues([['Date', 'Merchant', 'SGD']]).setFontWeight('bold').setBackground('#e8f0fe');
-  const largestTxs = allTxs.sort((a,b) => b.sgd - a.sgd).slice(0, 10);
+  const largestTxs = allTxs.sort((a,b) => b.sgd - a.sgd);
   if (largestTxs.length) dash.getRange(row+2, 12, largestTxs.length, 3).setValues(largestTxs.map(t => [t.date, t.merchant, t.sgd.toFixed(2)]));
 
   const chartTopRow = row + Math.max(sortedDaily.length, sortedCats.length, topMerch.length, largestTxs.length) + 4;
