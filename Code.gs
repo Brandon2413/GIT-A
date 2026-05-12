@@ -367,10 +367,12 @@ function weeklyDeepDive() {
   const prevWeekStart = new Date(Date.now() - 14*86400000);
   let total = 0, prevTotal = 0;
   const daily = {}, cats = {};
+  let earliestTx = null;
   for (let i = 1; i < data.length; i++) {
-    if (data[i][2] === 'FAST') continue;
+    if (data[i][2] === 'FAST' || data[i][7] === 'PayNow Transfer') continue;
     const d = new Date(data[i][0]);
     const sgd = +data[i][5];
+    if (!earliestTx || d < earliestTx) earliestTx = d;
     if (d >= weekAgo) {
       const k = Utilities.formatDate(d, 'GMT+8', 'EEE dd MMM');
       total += sgd;
@@ -384,8 +386,11 @@ function weeklyDeepDive() {
   const trendStr = prevTotal > 0 ? `${trend >= 0 ? '↑' : '↓'} ${Math.abs(trend).toFixed(1)}% vs last week` : 'No prior week data';
   let biggest = '', max = 0;
   Object.entries(daily).forEach(([k,v]) => { if (v > max) { max = v; biggest = k; } });
+  const daysOfData = earliestTx
+    ? Math.min(7, Math.max(1, Math.ceil((Date.now() - earliestTx.getTime()) / 86400000) + 1))
+    : 7;
   let html = `<h1>📊 Weekly Deep Dive</h1><h2>Total: SGD ${total.toFixed(2)} <small>(${trendStr})</small></h2>`;
-  html += `<p>Daily avg: SGD ${(total/7).toFixed(2)} | 🔴 Biggest: ${biggest} (SGD ${max.toFixed(2)})</p>`;
+  html += `<p>Daily avg: SGD ${(total/daysOfData).toFixed(2)} (over ${daysOfData} day${daysOfData===1?'':'s'}) | 🔴 Biggest: ${biggest} (SGD ${max.toFixed(2)})</p>`;
   html += `<h3>Daily breakdown</h3><ul>`;
   Object.entries(daily).forEach(([k,v]) => html += `<li>${v===max?'🔴':v>30?'🟡':'🟢'} ${k}: SGD ${v.toFixed(2)}</li>`);
   html += `</ul><h3>Category breakdown</h3><table border=1 cellpadding=5 style="border-collapse:collapse"><tr><th>Category</th><th>Spent</th><th>%</th></tr>`;
@@ -413,6 +418,7 @@ function monthlyParseFailureReport() {
 
 // ===== DASHBOARD =====
 function buildDashboard() {
+  syncTransactions();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const settings = getSettings();
   const txSheet = ss.getSheetByName('Transactions');
