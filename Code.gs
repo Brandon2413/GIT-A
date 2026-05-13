@@ -41,7 +41,7 @@ function categorize(merchant, type) {
   if (type === 'FAST') return 'Bank Transfer';
   const m = (merchant || '').toString();
   for (const rule of CATEGORY_RULES) if (rule.regex.test(m)) return rule.name;
-  if (type === 'PayNow') return 'PayNow Transfer';
+  if (type === 'PayNow') return 'PayNow';
   return 'Other';
 }
 
@@ -356,7 +356,7 @@ function dailyCheckIn() {
   let total = 0;
   const txs = [];
   for (let i = 1; i < data.length; i++) {
-    if (data[i][2] === 'FAST' || data[i][7] === 'PayNow Transfer') continue;
+    if (data[i][2] === 'FAST') continue;
     const d = Utilities.formatDate(new Date(data[i][0]), 'GMT+8', 'yyyy-MM-dd');
     if (d === todayStr) { total += +data[i][5]; txs.push(data[i]); }
   }
@@ -381,7 +381,7 @@ function weeklyDeepDive() {
   const daily = {}, cats = {};
   let earliestTx = null;
   for (let i = 1; i < data.length; i++) {
-    if (data[i][2] === 'FAST' || data[i][7] === 'PayNow Transfer') continue;
+    if (data[i][2] === 'FAST') continue;
     const d = new Date(data[i][0]);
     const sgd = +data[i][5];
     if (!earliestTx || d < earliestTx) earliestTx = d;
@@ -463,7 +463,7 @@ function buildDashboard() {
     const sgd = +row[5] || 0;
     const dStr = Utilities.formatDate(d, 'GMT+8', 'yyyy-MM-dd');
 
-    if (row[2] === 'FAST' || row[7] === 'PayNow Transfer') {
+    if (row[2] === 'FAST') {
       if (d >= lookbackStart) transferTotal += sgd;
       continue;
     }

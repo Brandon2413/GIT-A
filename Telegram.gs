@@ -140,7 +140,7 @@ function getTodayTotal() {
   const todayStr = Utilities.formatDate(new Date(), 'GMT+8', 'yyyy-MM-dd');
   let total = 0;
   for (let i = 1; i < data.length; i++) {
-    if (data[i][2] === 'FAST' || data[i][7] === 'PayNow Transfer') continue;
+    if (data[i][2] === 'FAST') continue;
     const d = Utilities.formatDate(new Date(data[i][0]), 'GMT+8', 'yyyy-MM-dd');
     if (d === todayStr) total += +data[i][5];
   }
@@ -155,7 +155,7 @@ function weekLine() {
   const weekAgo = new Date(Date.now() - 7 * 86400000);
   let total = 0;
   for (let i = 1; i < data.length; i++) {
-    if (data[i][2] === 'FAST' || data[i][7] === 'PayNow Transfer') continue;
+    if (data[i][2] === 'FAST') continue;
     const d = new Date(data[i][0]);
     if (d >= weekAgo) total += +data[i][5];
   }
