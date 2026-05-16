@@ -39,6 +39,7 @@ const CATEGORY_RULES = [
 
 function categorize(merchant, type) {
   if (type === 'FAST') return 'Bank Transfer';
+  if (type === 'Received') return 'Income';
   const m = (merchant || '').toString();
   for (const rule of CATEGORY_RULES) if (rule.regex.test(m)) return rule.name;
   if (type === 'PayNow') return 'PayNow';
@@ -123,9 +124,12 @@ function onOpen() {
     .addItem('📅 Backfill 180 days', 'backfill180')
     .addItem('📅 Backfill 365 days', 'backfill365')
     .addSeparator()
+    .addItem('📧 Send Morning Email Now', 'morningCheckIn')
     .addItem('📧 Send Daily Email Now', 'dailyCheckIn')
     .addItem('📧 Send Weekly Email Now', 'weeklyDeepDive')
+    .addItem('📧 Send Monthly Report Now', 'monthlyReport')
     .addItem('📧 Send Parse Failure Report', 'monthlyParseFailureReport')
+    .addItem('🩺 Run Health Check Now', 'runHealthCheck')
     .addSeparator()
     .addItem('🔄 Re-categorize All', 'recategorizeAll')
     .addItem('🔃 Setup / Migrate', 'setup')
@@ -197,16 +201,20 @@ function setup() {
   SpreadsheetApp.getUi().alert('✅ v3 ready! New: Settings, Parse Failures, Trend, Manual locks, Pagination, Live FX.');
 }
 
-const OUR_TRIGGERS = ['syncTransactions', 'buildDashboard', 'dailyCheckIn', 'weeklyDeepDive', 'monthlyParseFailureReport'];
+const OUR_TRIGGERS = ['syncTransactions', 'buildDashboard', 'morningCheckIn', 'dailyCheckIn',
+                      'weeklyDeepDive', 'monthlyReport', 'monthlyParseFailureReport', 'runHealthCheck'];
 function setupTriggers() {
   ScriptApp.getProjectTriggers().forEach(t => {
     if (OUR_TRIGGERS.includes(t.getHandlerFunction())) ScriptApp.deleteTrigger(t);
   });
   ScriptApp.newTrigger('syncTransactions').timeBased().everyHours(1).create();
   ScriptApp.newTrigger('buildDashboard').timeBased().everyHours(1).create();
+  ScriptApp.newTrigger('morningCheckIn').timeBased().atHour(9).everyDays(1).create();
   ScriptApp.newTrigger('dailyCheckIn').timeBased().atHour(21).everyDays(1).create();
   ScriptApp.newTrigger('weeklyDeepDive').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(21).create();
+  ScriptApp.newTrigger('monthlyReport').timeBased().onMonthDay(1).atHour(8).create();
   ScriptApp.newTrigger('monthlyParseFailureReport').timeBased().onMonthDay(1).atHour(9).create();
+  ScriptApp.newTrigger('runHealthCheck').timeBased().everyDays(3).atHour(10).create();
 }
 
 // ===== PAGINATION =====
@@ -246,16 +254,28 @@ function parseTrust(msg) {
 function parseDBS(msg) {
   const body = (msg.getPlainBody() + ' ' + msg.getBody().replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ');
   const subject = msg.getSubject();
-  if (/eDocument|Limit|received a transfer|OTP|protect|scam/i.test(subject)) return null;
+  if (/eDocument|Limit|OTP|protect|scam/i.test(subject)) return null;
 
   const amtMatch = body.match(/Amount:\s*(?:SGD|S\$)\s*([\d,]+\.?\d{0,2})/i);
   if (!amtMatch) {
-    if (/transaction|paynow|nets|fast|alert/i.test(subject)) {
+    if (/transaction|paynow|nets|fast|alert|received|credited/i.test(subject)) {
       return { _failed: true, reason: 'DBS: amount field not found' };
     }
     return null;
   }
   const amount = parseFloat(amtMatch[1].replace(/,/g, ''));
+
+  // INCOMING: PayNow received / funds credited. Recorded separately as income.
+  const isIncoming = /received|credited|incoming|deposit/i.test(subject) ||
+                     /you\s+have\s+received|sent\s+you\s+SGD|sent\s+you\s+S\$|has\s+been\s+credited/i.test(body);
+  if (isIncoming) {
+    const fromMatch = body.match(/From:\s*([A-Z0-9][^\n<]{2,80}?)(?:\s+If\s|\s+Thank|\s+Yours|\s+To:|\s+Date|\s+Reference|\s+Transaction|\s{3,})/i);
+    return {
+      bank: 'DBS', type: 'Received', currency: 'SGD', amount,
+      merchant: fromMatch ? fromMatch[1].trim() : 'Unknown sender',
+      status: 'success'
+    };
+  }
 
   if (subject.includes('NETS')) {
     const merch = body.match(/(?:Merchant|To|Payee|At):\s*([A-Z0-9][^\n<]{2,80}?)(?:\s+If\s|\s+Thank|\s+Yours|\s+Date|\s+Reference|\s+Transaction|\s{3,})/i);
@@ -353,21 +373,34 @@ function dailyCheckIn() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Transactions');
   const data = sheet.getDataRange().getValues();
   const todayStr = Utilities.formatDate(new Date(), 'GMT+8', 'yyyy-MM-dd');
-  let total = 0;
-  const txs = [];
+  let spent = 0, received = 0;
+  const spentTxs = [], receivedTxs = [];
   for (let i = 1; i < data.length; i++) {
     if (data[i][2] === 'FAST') continue;
     const d = Utilities.formatDate(new Date(data[i][0]), 'GMT+8', 'yyyy-MM-dd');
-    if (d === todayStr) { total += +data[i][5]; txs.push(data[i]); }
+    if (d !== todayStr) continue;
+    if (data[i][2] === 'Received') { received += +data[i][5]; receivedTxs.push(data[i]); }
+    else { spent += +data[i][5]; spentTxs.push(data[i]); }
   }
-  const verdict = total === 0 ? '🎉 SGD 0 today!' : total < settings.dailyTarget*0.7 ? '🟢 Under budget' : total < settings.dailyTarget ? '🟡 Watch it' : '🔴 OVER BUDGET';
-  let html = `<h2>💰 Today: SGD ${total.toFixed(2)}</h2><h3>${verdict}</h3><p>Target: SGD ${settings.dailyTarget}</p>`;
-  if (txs.length) {
-    html += `<table border=1 cellpadding=5 style="border-collapse:collapse"><tr><th>Bank</th><th>Type</th><th>Merchant</th><th>Category</th><th>Amount</th></tr>`;
-    txs.forEach(t => html += `<tr><td>${t[1]}</td><td>${t[2]}</td><td>${t[6]}</td><td>${t[7]}</td><td>${t[3]} ${t[4]} (≈SGD${t[5]})</td></tr>`);
+  const verdict = spent === 0 ? '🎉 SGD 0 spent today!' :
+                  spent < settings.dailyTarget*0.7 ? '🟢 Under budget' :
+                  spent < settings.dailyTarget ? '🟡 Watch it' : '🔴 OVER BUDGET';
+  let html = `<h2>💰 Today: SGD ${spent.toFixed(2)} spent`;
+  if (received > 0) html += ` · 💵 SGD ${received.toFixed(2)} received`;
+  html += `</h2><h3>${verdict}</h3><p>Target: SGD ${settings.dailyTarget}</p>`;
+  if (spentTxs.length) {
+    html += `<h3>Spent</h3><table border=1 cellpadding=5 style="border-collapse:collapse"><tr><th>Bank</th><th>Type</th><th>Merchant</th><th>Category</th><th>Amount</th></tr>`;
+    spentTxs.forEach(t => html += `<tr><td>${t[1]}</td><td>${t[2]}</td><td>${t[6]}</td><td>${t[7]}</td><td>${t[3]} ${t[4]} (≈SGD${t[5]})</td></tr>`);
     html += `</table>`;
   }
-  GmailApp.sendEmail(Session.getActiveUser().getEmail(), `💰 Daily: SGD ${total.toFixed(2)} - ${todayStr}`, '', { htmlBody: html });
+  if (receivedTxs.length) {
+    html += `<h3>Received from ${receivedTxs.length} ${receivedTxs.length===1?'person':'people'}</h3><table border=1 cellpadding=5 style="border-collapse:collapse"><tr><th>Bank</th><th>From</th><th>Amount</th></tr>`;
+    receivedTxs.forEach(t => html += `<tr><td>${t[1]}</td><td>${t[6]}</td><td>SGD ${t[5]}</td></tr>`);
+    html += `</table>`;
+  }
+  GmailApp.sendEmail(Session.getActiveUser().getEmail(),
+    `💰 Today: SGD ${spent.toFixed(2)} spent${received > 0 ? `, SGD ${received.toFixed(2)} received` : ''} - ${todayStr}`,
+    '', { htmlBody: html });
 }
 
 function weeklyDeepDive() {
@@ -381,7 +414,7 @@ function weeklyDeepDive() {
   const daily = {}, cats = {};
   let earliestTx = null;
   for (let i = 1; i < data.length; i++) {
-    if (data[i][2] === 'FAST') continue;
+    if (data[i][2] === 'FAST' || data[i][2] === 'Received') continue;
     const d = new Date(data[i][0]);
     const sgd = +data[i][5];
     if (!earliestTx || d < earliestTx) earliestTx = d;
@@ -411,6 +444,157 @@ function weeklyDeepDive() {
   Object.entries(settings.budgets).forEach(([c,b]) => { const s = cats[c]||0; html += `<li>${s<=b?'✅':'❌'} ${c}: SGD ${s.toFixed(2)} / ${b}</li>`; });
   html += `</ul>`;
   GmailApp.sendEmail(Session.getActiveUser().getEmail(), `📈 Weekly: SGD ${total.toFixed(2)} (${trendStr})`, '', { htmlBody: html });
+}
+
+function morningCheckIn() {
+  syncTransactions();
+  const settings = getSettings();
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Transactions');
+  const data = sheet.getDataRange().getValues();
+
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 86400000);
+  const yStr = Utilities.formatDate(yesterday, 'GMT+8', 'yyyy-MM-dd');
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  let ySpent = 0, yReceived = 0;
+  const yCats = {};
+  const ySpentTxs = [], yReceivedTxs = [];
+  let monthSpent = 0;
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][2] === 'FAST') continue;
+    const d = new Date(data[i][0]);
+    const dStr = Utilities.formatDate(d, 'GMT+8', 'yyyy-MM-dd');
+    const sgd = +data[i][5];
+
+    if (dStr === yStr) {
+      if (data[i][2] === 'Received') { yReceived += sgd; yReceivedTxs.push(data[i]); }
+      else {
+        ySpent += sgd; ySpentTxs.push(data[i]);
+        yCats[data[i][7] || 'Other'] = (yCats[data[i][7] || 'Other'] || 0) + sgd;
+      }
+    }
+    if (d >= monthStart && data[i][2] !== 'Received') monthSpent += sgd;
+  }
+
+  const monthlyBudget = settings.dailyTarget * 30;
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const dayOfMonth = now.getDate();
+  const daysRemaining = daysInMonth - dayOfMonth + 1;
+  const monthRemaining = monthlyBudget - monthSpent;
+  const adjustedDailyTarget = daysRemaining > 0 ? Math.max(0, monthRemaining / daysRemaining) : 0;
+
+  let html = `<h2>☀️ Good morning</h2>`;
+  html += `<h3>Yesterday: SGD ${ySpent.toFixed(2)} spent`;
+  if (yReceived > 0) html += ` · 💵 SGD ${yReceived.toFixed(2)} received from ${yReceivedTxs.length} ${yReceivedTxs.length===1?'person':'people'}`;
+  html += `</h3>`;
+  if (Object.keys(yCats).length) {
+    html += `<table border=1 cellpadding=5 style="border-collapse:collapse"><tr><th>Category</th><th>SGD</th></tr>`;
+    Object.entries(yCats).sort((a,b) => b[1]-a[1]).forEach(([c,v]) =>
+      html += `<tr><td>${c}</td><td>SGD ${v.toFixed(2)}</td></tr>`);
+    html += `</table>`;
+  }
+  html += `<h3>Today's outlook</h3>`;
+  html += `<p><b>Daily target:</b> SGD ${settings.dailyTarget.toFixed(2)}</p>`;
+  html += `<p><b>This month:</b> SGD ${monthSpent.toFixed(2)} spent of SGD ${monthlyBudget.toFixed(2)} (${(monthSpent/monthlyBudget*100).toFixed(0)}%)</p>`;
+  if (monthRemaining > 0) {
+    html += `<p>To stay on monthly budget: spend at most <b>SGD ${adjustedDailyTarget.toFixed(2)}/day</b> for the next ${daysRemaining} day${daysRemaining===1?'':'s'}.</p>`;
+  } else {
+    html += `<p>⚠️ Over monthly budget by SGD ${Math.abs(monthRemaining).toFixed(2)}.</p>`;
+  }
+  GmailApp.sendEmail(Session.getActiveUser().getEmail(),
+    `☀️ Yesterday: SGD ${ySpent.toFixed(2)}${yReceived > 0 ? `, +${yReceived.toFixed(2)}` : ''}`,
+    '', { htmlBody: html });
+}
+
+function monthlyReport() {
+  syncTransactions();
+  const settings = getSettings();
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Transactions');
+  const data = sheet.getDataRange().getValues();
+
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+  const monthName = Utilities.formatDate(monthStart, 'GMT+8', 'MMMM yyyy');
+  const daysInMonth = monthEnd.getDate();
+
+  let totalSpent = 0, totalReceived = 0;
+  const weeklySpent = [0, 0, 0, 0, 0];
+  const categories = {};
+  const receivers = {};
+
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][2] === 'FAST') continue;
+    const d = new Date(data[i][0]);
+    if (d < monthStart || d > monthEnd) continue;
+    const sgd = +data[i][5];
+    if (data[i][2] === 'Received') {
+      totalReceived += sgd;
+      receivers[data[i][6]] = (receivers[data[i][6]] || 0) + sgd;
+      continue;
+    }
+    totalSpent += sgd;
+    const weekIdx = Math.min(4, Math.floor((d.getDate() - 1) / 7));
+    weeklySpent[weekIdx] += sgd;
+    const cat = data[i][7] || 'Other';
+    categories[cat] = (categories[cat] || 0) + sgd;
+  }
+
+  let html = `<h1>📊 ${monthName} Report</h1>`;
+  html += `<h2>Spent: SGD ${totalSpent.toFixed(2)}`;
+  if (totalReceived > 0) html += ` · 💵 Received: SGD ${totalReceived.toFixed(2)}`;
+  html += `</h2>`;
+  html += `<p>Daily avg: SGD ${(totalSpent/daysInMonth).toFixed(2)} over ${daysInMonth} days.</p>`;
+
+  html += `<h3>By week</h3><table border=1 cellpadding=5 style="border-collapse:collapse"><tr><th>Week</th><th>Days</th><th>Spent</th></tr>`;
+  weeklySpent.forEach((amt, i) => {
+    if (amt === 0 && i >= 4) return;
+    const startDay = i * 7 + 1;
+    const endDay = i === 4 ? daysInMonth : Math.min((i + 1) * 7, daysInMonth);
+    if (startDay > daysInMonth) return;
+    html += `<tr><td>Week ${i+1}</td><td>${startDay}–${endDay}</td><td>SGD ${amt.toFixed(2)}</td></tr>`;
+  });
+  html += `</table>`;
+
+  html += `<h3>By category</h3><table border=1 cellpadding=5 style="border-collapse:collapse"><tr><th>Category</th><th>Spent</th><th>%</th><th>vs Budget (monthly)</th></tr>`;
+  Object.entries(categories).sort((a,b) => b[1]-a[1]).forEach(([c, v]) => {
+    const wkBudget = settings.budgets[c];
+    const monthBudget = wkBudget ? wkBudget * 4.33 : null;
+    const status = monthBudget ? `${v <= monthBudget ? '✅' : '❌'} SGD ${monthBudget.toFixed(0)}` : '-';
+    html += `<tr><td>${c}</td><td>SGD ${v.toFixed(2)}</td><td>${(v/totalSpent*100).toFixed(1)}%</td><td>${status}</td></tr>`;
+  });
+  html += `</table>`;
+
+  if (totalReceived > 0) {
+    html += `<h3>Money received</h3><table border=1 cellpadding=5 style="border-collapse:collapse"><tr><th>From</th><th>SGD</th></tr>`;
+    Object.entries(receivers).sort((a,b) => b[1]-a[1]).forEach(([from, amt]) =>
+      html += `<tr><td>${from}</td><td>SGD ${amt.toFixed(2)}</td></tr>`);
+    html += `</table>`;
+  }
+
+  GmailApp.sendEmail(Session.getActiveUser().getEmail(),
+    `📊 ${monthName}: SGD ${totalSpent.toFixed(2)}${totalReceived > 0 ? ` (+${totalReceived.toFixed(2)})` : ''}`,
+    '', { htmlBody: html });
+}
+
+function runHealthCheck() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Transactions');
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  const recent = sheet.getRange(Math.max(2, lastRow - 30), 1, Math.min(30, lastRow - 1), 1).getValues();
+  const mostRecent = Math.max(...recent.map(r => new Date(r[0]).getTime()));
+  const daysSince = Math.floor((Date.now() - mostRecent) / 86400000);
+  if (daysSince < 5) return;
+  const html = `<h2>⚠️ Spending tracker health check</h2>
+    <p>No new transactions have synced for <b>${daysSince} days</b>.</p>
+    <p>Likely causes:</p><ul>
+    <li>You genuinely haven't spent money for ${daysSince} days</li>
+    <li>Your bank changed an email template and parsing silently broke</li>
+    <li>The hourly sync trigger stopped firing</li></ul>
+    <p>Check the <b>Parse Failures</b> sheet for clues, then run "Sync Now" from the menu.</p>`;
+  GmailApp.sendEmail(Session.getActiveUser().getEmail(),
+    `⚠️ Spending tracker: ${daysSince} days without new transactions`, '', { htmlBody: html });
 }
 
 function monthlyParseFailureReport() {
@@ -453,6 +637,7 @@ function buildDashboard() {
 
   let todayTotal = 0, weekTotal = 0, monthTotal = 0, lookbackTotal = 0;
   let lastMonthSameDay = 0, biggestDay = '', biggestAmt = 0, transferTotal = 0;
+  let incomeToday = 0, incomeMonth = 0, incomeLookback = 0;
   const daily = {}, cats = {}, merchants = {};
   const allTxs = [];
 
@@ -465,6 +650,12 @@ function buildDashboard() {
 
     if (row[2] === 'FAST') {
       if (d >= lookbackStart) transferTotal += sgd;
+      continue;
+    }
+    if (row[2] === 'Received') {
+      if (d >= lookbackStart) incomeLookback += sgd;
+      if (d >= monthStart) incomeMonth += sgd;
+      if (dStr === today) incomeToday += sgd;
       continue;
     }
 
@@ -505,8 +696,11 @@ function buildDashboard() {
   if (transferTotal > 0) {
     dash.getRange('A7').setValue(`ℹ️ Excluded SGD ${transferTotal.toFixed(2)} in FAST bank transfers (not personal spending)`).setFontColor('#5f6368').setFontSize(10).setFontStyle('italic');
   }
+  if (incomeLookback > 0) {
+    dash.getRange('A8').setValue(`💵 Received SGD ${incomeLookback.toFixed(2)} this ${lookback}d period · SGD ${incomeMonth.toFixed(2)} this month · SGD ${incomeToday.toFixed(2)} today`).setFontColor('#137333').setFontSize(10).setFontStyle('italic');
+  }
 
-  let row = 9;
+  let row = 10;
   dash.getRange(row, 1).setValue(`📅 Daily Spending`).setFontWeight('bold').setFontSize(13);
   dash.getRange(row+1, 1, 1, 2).setValues([['Date', 'SGD']]).setFontWeight('bold').setBackground('#e8f0fe');
   const sortedDaily = Object.entries(daily).sort();
